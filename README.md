@@ -11,6 +11,7 @@ All geometry uses primitives (cylinders and boxes) — no mesh files required.
 | `robot_simulation` | Gazebo world, ros2_control config, full simulation launch |
 | `robot_interfaces` | Custom service definitions (`Pick.srv`, `Place.srv`) |
 | `robot_services` | Pick and place service servers (C++) |
+| `robot_vision` | Object detection and pose estimation *(planned)* |
 
 ## Robot structure
 
@@ -66,9 +67,12 @@ TCP reach: **0 – 0.83 m** from joint2 (z = 0.15 m above ground).
 ```bash
 cd ~/ros2_ws
 colcon build --packages-select \
-  robot_description robot_simulation robot_interfaces robot_services
+  robot_description robot_simulation \
+  robot_interfaces robot_services
 source install/setup.bash
 ```
+
+> Build all packages at once with `colcon build` (omit `--packages-select`).
 
 ## Launch
 
