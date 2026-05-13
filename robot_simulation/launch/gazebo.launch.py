@@ -1,0 +1,126 @@
+import os
+from launch import LaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+)
+from launch.event_handlers import OnProcessExit
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    use_sim_time = LaunchConfiguration('use_sim_time', default='true')
+
+    # ── Robot description (processed by xacro at launch time) ────
+    robot_description_content = ParameterValue(
+        Command([
+            PathJoinSubstitution([FindExecutable(name='xacro')]),
+            ' ',
+            PathJoinSubstitution([
+                FindPackageShare('robot_description'), 'urdf', 'robot.urdf.xacro'
+            ]),
+        ]),
+        value_type=str,
+    )
+    robot_description = {'robot_description': robot_description_content}
+
+    # Controller config (also used by spawner --param-file)
+    robot_controllers = PathJoinSubstitution([
+        FindPackageShare('robot_simulation'), 'config', 'ros2_controllers.yaml'
+    ])
+
+    # ── Nodes ─────────────────────────────────────────────────────
+    robot_state_publisher = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        output='screen',
+        parameters=[robot_description, {'use_sim_time': use_sim_time}],
+    )
+
+    spawn_robot = Node(
+        package='ros_gz_sim',
+        executable='create',
+        output='screen',
+        arguments=[
+            '-topic', '/robot_description',
+            '-name',  'arm6dof',
+            '-allow_renaming', 'true',
+        ],
+    )
+
+    joint_state_broadcaster_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['joint_state_broadcaster'],
+    )
+
+    arm_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['arm_controller', '--param-file', robot_controllers],
+    )
+
+    gripper_controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=['gripper_controller', '--param-file', robot_controllers],
+    )
+
+    # /clock bridge: Gazebo sim time → ROS
+    clock_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
+        output='screen',
+    )
+
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        output='screen',
+        arguments=['-d', PathJoinSubstitution([
+            FindPackageShare('robot_description'), 'rviz', 'display.rviz'
+        ])],
+        parameters=[{'use_sim_time': use_sim_time}],
+    )
+
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='true',
+            description='Use Gazebo simulated clock'
+        ),
+
+        # Start Gazebo Sim with an empty world
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                PathJoinSubstitution([
+                    FindPackageShare('ros_gz_sim'), 'launch', 'gz_sim.launch.py'
+                ])
+            ]),
+            launch_arguments=[('gz_args', '-r -v 1 empty.sdf')],
+        ),
+
+        clock_bridge,
+        robot_state_publisher,
+        rviz,
+        spawn_robot,
+
+        # Chain controllers: JSB first, then arm + gripper in parallel
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=spawn_robot,
+                on_exit=[joint_state_broadcaster_spawner],
+            )
+        ),
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=joint_state_broadcaster_spawner,
+                on_exit=[arm_controller_spawner, gripper_controller_spawner],
+            )
+        ),
+    ])
