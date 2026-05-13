@@ -1,0 +1,5 @@
+geometry_msgs/Pose target_pose      # drop-off pose in world frame
+float64 approach_height             # pre-place height above target (m), e.g. 0.10
+---
+bool success
+string message

@@ -9,6 +9,8 @@ All geometry uses primitives (cylinders and boxes) — no mesh files required.
 |---|---|
 | `robot_description` | URDF/xacro model, RViz config, standalone visualisation launch |
 | `robot_simulation` | Gazebo world, ros2_control config, full simulation launch |
+| `robot_interfaces` | Custom service definitions (`Pick.srv`, `Place.srv`) |
+| `robot_services` | Pick and place service servers (C++) |
 
 ## Robot structure
 
@@ -40,6 +42,16 @@ world (fixed)
 | `arm_controller` | JointTrajectoryController | joint1–6, position |
 | `gripper_controller` | ForwardCommandController | finger_left_joint, position |
 
+## Services
+
+| Service | Type | Description |
+|---|---|---|
+| `/pick` | `robot_interfaces/srv/Pick` | Move to pre-grasp → grasp → lift |
+| `/place` | `robot_interfaces/srv/Place` | Move to pre-place → release → retract |
+
+Both services use a geometric 2R IK (elbow-down, joint4–6 = 0).  
+TCP reach: **0 – 0.83 m** from joint2 (z = 0.15 m above ground).
+
 ## Dependencies
 
 - ROS 2 Jazzy
@@ -47,12 +59,14 @@ world (fixed)
 - `gz_ros2_control`, `ros_gz_sim`, `ros_gz_bridge`
 - `robot_state_publisher`, `joint_state_publisher_gui`
 - `joint_trajectory_controller`, `forward_command_controller`
+- `rclcpp_action`, `control_msgs`
 
 ## Build
 
 ```bash
 cd ~/ros2_ws
-colcon build --packages-select robot_description robot_simulation
+colcon build --packages-select \
+  robot_description robot_simulation robot_interfaces robot_services
 source install/setup.bash
 ```
 
@@ -70,13 +84,20 @@ ros2 launch robot_description display.launch.py
 ros2 launch robot_simulation gazebo.launch.py
 ```
 
-Startup sequence: Gazebo loads → robot spawns → `joint_state_broadcaster` activates → `arm_controller` + `gripper_controller` activate.
+Startup sequence: Gazebo → robot spawns → `joint_state_broadcaster` → `arm_controller` + `gripper_controller`.
 
-> **Tip:** if you have stale `robot_state_publisher` processes from other projects interfering with `/robot_description`, run `pkill -9 -f robot_state_publisher` before launching.
+> **Tip:** if stale `robot_state_publisher` processes from other projects interfere with `/robot_description`, run `pkill -9 -f robot_state_publisher` before launching.
+
+### Pick and place servers (requires simulation running)
+
+```bash
+ros2 run robot_services pick_service_server &
+ros2 run robot_services place_service_server &
+```
 
 ## Commanding the arm
 
-Send a joint trajectory (positions in radians, 3-second duration):
+Send a joint trajectory (positions in radians):
 
 ```bash
 ros2 topic pub --once /arm_controller/joint_trajectory \
@@ -107,6 +128,21 @@ ros2 topic pub -r 10 --times 20 /gripper_controller/commands \
 ros2 topic pub -r 10 --times 20 /gripper_controller/commands \
   std_msgs/msg/Float64MultiArray '{data: [0.0]}'
 ```
+
+## Pick and place services
+
+```bash
+# Pick an object at (0.5, 0.0, 0.3), approaching 10 cm from above
+ros2 service call /pick robot_interfaces/srv/Pick \
+  '{target_pose: {position: {x: 0.5, y: 0.0, z: 0.3}}, approach_height: 0.1}'
+
+# Place it at (0.3, 0.4, 0.3)
+ros2 service call /place robot_interfaces/srv/Place \
+  '{target_pose: {position: {x: 0.3, y: 0.4, z: 0.3}}, approach_height: 0.1}'
+```
+
+**Pick sequence:** open gripper → pre-grasp → descend → close gripper → lift  
+**Place sequence:** pre-place → descend → open gripper → retract
 
 ## Joint limits
 

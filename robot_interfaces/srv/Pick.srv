@@ -1,0 +1,5 @@
+geometry_msgs/Pose target_pose      # object pose in world frame
+float64 approach_height             # pre-grasp height above target (m), e.g. 0.10
+---
+bool success
+string message
