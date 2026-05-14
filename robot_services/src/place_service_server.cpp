@@ -1,15 +1,14 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <control_msgs/action/follow_joint_trajectory.hpp>
+#include <control_msgs/action/gripper_command.hpp>
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
-#include <std_msgs/msg/float64_multi_array.hpp>
 #include <robot_interfaces/srv/place.hpp>
 
 #include <cmath>
 #include <algorithm>
 #include <chrono>
 #include <future>
-#include <thread>
 
 static constexpr double JOINT2_Z = 0.15;
 static constexpr double L1       = 0.30;
@@ -46,9 +45,11 @@ static bool computeIK(double tx, double ty, double tz,
 class PlaceServiceServer : public rclcpp::Node
 {
 public:
-    using Place         = robot_interfaces::srv::Place;
-    using FJT           = control_msgs::action::FollowJointTrajectory;
-    using GoalHandleFJT = rclcpp_action::ClientGoalHandle<FJT>;
+    using Place           = robot_interfaces::srv::Place;
+    using FJT             = control_msgs::action::FollowJointTrajectory;
+    using GoalHandleFJT   = rclcpp_action::ClientGoalHandle<FJT>;
+    using GripperCmd      = control_msgs::action::GripperCommand;
+    using GoalHandleGrip  = rclcpp_action::ClientGoalHandle<GripperCmd>;
 
     explicit PlaceServiceServer()
     : Node("place_service_server")
@@ -65,9 +66,8 @@ public:
         arm_client_ = rclcpp_action::create_client<FJT>(
             this, "/arm_controller/follow_joint_trajectory");
 
-        gripper_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
-            "/gripper_controller/commands",
-            rclcpp::QoS(10).best_effort());
+        gripper_client_ = rclcpp_action::create_client<GripperCmd>(
+            this, "/gripper_controller/gripper_cmd");
 
         RCLCPP_INFO(get_logger(), "Place service server ready  →  /place");
     }
@@ -76,7 +76,7 @@ private:
     rclcpp::CallbackGroup::SharedPtr srv_cbg_;
     rclcpp::Service<Place>::SharedPtr service_;
     rclcpp_action::Client<FJT>::SharedPtr arm_client_;
-    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr gripper_pub_;
+    rclcpp_action::Client<GripperCmd>::SharedPtr gripper_client_;
 
     bool sendArm(const std::vector<double> & positions, double duration_s,
                  std::chrono::seconds timeout = std::chrono::seconds(30))
@@ -111,14 +111,31 @@ private:
         return future.get();
     }
 
-    void commandGripper(double opening)
+    bool commandGripper(double opening,
+                        std::chrono::seconds timeout = std::chrono::seconds(10))
     {
-        std_msgs::msg::Float64MultiArray msg;
-        msg.data = {opening};
-        for (int i = 0; i < 20; ++i) {
-            gripper_pub_->publish(msg);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (!gripper_client_->wait_for_action_server(std::chrono::seconds(5))) {
+            RCLCPP_ERROR(get_logger(), "Gripper action server not available");
+            return false;
         }
+        GripperCmd::Goal goal;
+        goal.command.position = opening;
+        goal.command.max_effort = 50.0;
+
+        auto promise = std::make_shared<std::promise<bool>>();
+        auto future  = promise->get_future();
+
+        rclcpp_action::Client<GripperCmd>::SendGoalOptions opts;
+        opts.result_callback = [promise](const GoalHandleGrip::WrappedResult & r) {
+            promise->set_value(r.code == rclcpp_action::ResultCode::SUCCEEDED);
+        };
+        gripper_client_->async_send_goal(goal, opts);
+
+        if (future.wait_for(timeout) != std::future_status::ready) {
+            RCLCPP_ERROR(get_logger(), "Gripper command timed out");
+            return false;
+        }
+        return future.get();
     }
 
     void handlePlace(const std::shared_ptr<Place::Request>  req,
@@ -165,7 +182,6 @@ private:
         // 3. Release object
         RCLCPP_INFO(get_logger(), "[place] Opening gripper");
         commandGripper(0.03);
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         // 4. Retract to pre-place height
         RCLCPP_INFO(get_logger(), "[place] Retracting");

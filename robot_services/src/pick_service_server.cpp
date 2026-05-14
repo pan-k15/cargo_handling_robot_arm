@@ -1,15 +1,14 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <control_msgs/action/follow_joint_trajectory.hpp>
+#include <control_msgs/action/gripper_command.hpp>
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
-#include <std_msgs/msg/float64_multi_array.hpp>
 #include <robot_interfaces/srv/pick.hpp>
 
 #include <cmath>
 #include <algorithm>
 #include <chrono>
 #include <future>
-#include <thread>
 
 // ── Robot geometry constants ─────────────────────────────────────────────────
 // joint2 sits at z = 0.05 (base) + 0.10 (link1) = 0.15 m above the world origin.
@@ -55,9 +54,11 @@ static bool computeIK(double tx, double ty, double tz,
 class PickServiceServer : public rclcpp::Node
 {
 public:
-    using Pick          = robot_interfaces::srv::Pick;
-    using FJT           = control_msgs::action::FollowJointTrajectory;
-    using GoalHandleFJT = rclcpp_action::ClientGoalHandle<FJT>;
+    using Pick            = robot_interfaces::srv::Pick;
+    using FJT             = control_msgs::action::FollowJointTrajectory;
+    using GoalHandleFJT   = rclcpp_action::ClientGoalHandle<FJT>;
+    using GripperCmd      = control_msgs::action::GripperCommand;
+    using GoalHandleGrip  = rclcpp_action::ClientGoalHandle<GripperCmd>;
 
     explicit PickServiceServer()
     : Node("pick_service_server")
@@ -76,9 +77,8 @@ public:
         arm_client_ = rclcpp_action::create_client<FJT>(
             this, "/arm_controller/follow_joint_trajectory");
 
-        gripper_pub_ = create_publisher<std_msgs::msg::Float64MultiArray>(
-            "/gripper_controller/commands",
-            rclcpp::QoS(10).best_effort());
+        gripper_client_ = rclcpp_action::create_client<GripperCmd>(
+            this, "/gripper_controller/gripper_cmd");
 
         RCLCPP_INFO(get_logger(), "Pick service server ready  →  /pick");
     }
@@ -87,7 +87,7 @@ private:
     rclcpp::CallbackGroup::SharedPtr srv_cbg_;
     rclcpp::Service<Pick>::SharedPtr service_;
     rclcpp_action::Client<FJT>::SharedPtr arm_client_;
-    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr gripper_pub_;
+    rclcpp_action::Client<GripperCmd>::SharedPtr gripper_client_;
 
     // Send a joint-space goal and block until the action completes (or times out).
     bool sendArm(const std::vector<double> & positions, double duration_s,
@@ -123,15 +123,31 @@ private:
         return future.get();
     }
 
-    // Publish the gripper command repeatedly to overcome BEST_EFFORT QoS drops.
-    void commandGripper(double opening)
+    bool commandGripper(double opening,
+                        std::chrono::seconds timeout = std::chrono::seconds(10))
     {
-        std_msgs::msg::Float64MultiArray msg;
-        msg.data = {opening};
-        for (int i = 0; i < 20; ++i) {
-            gripper_pub_->publish(msg);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (!gripper_client_->wait_for_action_server(std::chrono::seconds(5))) {
+            RCLCPP_ERROR(get_logger(), "Gripper action server not available");
+            return false;
         }
+        GripperCmd::Goal goal;
+        goal.command.position = opening;
+        goal.command.max_effort = 50.0;
+
+        auto promise = std::make_shared<std::promise<bool>>();
+        auto future  = promise->get_future();
+
+        rclcpp_action::Client<GripperCmd>::SendGoalOptions opts;
+        opts.result_callback = [promise](const GoalHandleGrip::WrappedResult & r) {
+            promise->set_value(r.code == rclcpp_action::ResultCode::SUCCEEDED);
+        };
+        gripper_client_->async_send_goal(goal, opts);
+
+        if (future.wait_for(timeout) != std::future_status::ready) {
+            RCLCPP_ERROR(get_logger(), "Gripper command timed out");
+            return false;
+        }
+        return future.get();
     }
 
     void handlePick(const std::shared_ptr<Pick::Request>  req,
@@ -182,7 +198,6 @@ private:
         // 4. Close gripper
         RCLCPP_INFO(get_logger(), "[pick] Closing gripper");
         commandGripper(0.0);
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         // 5. Lift back to pre-grasp
         RCLCPP_INFO(get_logger(), "[pick] Lifting");
