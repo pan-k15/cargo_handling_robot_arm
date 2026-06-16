@@ -38,7 +38,7 @@ gripper_controller:
   ros__parameters:
     joint: finger_left_joint
     goal_tolerance: 0.001
-    max_effort: 50.0
-    allow_stalling: false
+    max_effort: 200.0
+    allow_stalling: true          # stall = fingers pressed on object = successful grip
     stall_velocity_threshold: 0.001
-    stall_timeout: 1.0
+    stall_timeout: 0.5

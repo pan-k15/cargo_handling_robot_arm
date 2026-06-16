@@ -1,0 +1,419 @@
+<?xml version="1.0" ?>
+<!--
+  cargo_world.sdf — Warehouse cargo handling scene for arm6dof.
+
+  Layout (robot arm sits at world origin):
+    Pick station  : table top at z=0.30, centred at (0.50,  0.00)
+    Place station : table top at z=0.30, centred at (0.30,  0.45)
+    Three cargo boxes rest on the pick table at positions that match
+    the default /pick and /place service examples in README.md.
+
+  Reachability check (2R IK, elbow-down):
+    JOINT2_Z=0.15 m, L1=0.30 m, L2=0.53 m → max reach 0.83 m
+    Pick  (0.50,  0.00, 0.30): d=sqrt(0.50²+0.15²)=0.52 m  ✓
+    Place (0.30,  0.45, 0.30): d=sqrt(0.54²+0.15²)=0.56 m  ✓
+-->
+<sdf version="1.9">
+<world name="cargo_world">
+
+  <!-- ── Physics ──────────────────────────────────────────────── -->
+  <physics name="1ms" type="ignored">
+    <max_step_size>0.001</max_step_size>
+    <real_time_factor>1.0</real_time_factor>
+  </physics>
+
+  <!-- ── Required Gz Sim plugins ──────────────────────────────── -->
+  <plugin filename="gz-sim-physics-system"
+          name="gz::sim::systems::Physics"/>
+  <plugin filename="gz-sim-user-commands-system"
+          name="gz::sim::systems::UserCommands"/>
+  <plugin filename="gz-sim-scene-broadcaster-system"
+          name="gz::sim::systems::SceneBroadcaster"/>
+  <plugin filename="gz-sim-sensors-system"
+          name="gz::sim::systems::Sensors">
+    <render_engine>ogre2</render_engine>
+  </plugin>
+  <plugin filename="gz-sim-contact-system"
+          name="gz::sim::systems::Contact"/>
+
+  <!-- ── Ambient + sun ────────────────────────────────────────── -->
+  <scene>
+    <ambient>0.4 0.4 0.4 1</ambient>
+    <background>0.25 0.25 0.30 1</background>
+    <shadows>true</shadows>
+  </scene>
+
+  <light name="sun" type="directional">
+    <pose>0 0 10 0 0 0</pose>
+    <cast_shadows>true</cast_shadows>
+    <diffuse>0.85 0.85 0.85 1</diffuse>
+    <specular>0.15 0.15 0.15 1</specular>
+    <direction>-0.5 0.2 -0.9</direction>
+    <attenuation>
+      <range>1000</range>
+      <constant>0.9</constant>
+      <linear>0.01</linear>
+      <quadratic>0.001</quadratic>
+    </attenuation>
+  </light>
+
+  <!-- Overhead warehouse lamps -->
+  <light name="lamp_1" type="point">
+    <pose>0.5 0.0 1.8 0 0 0</pose>
+    <diffuse>1.0 0.95 0.85 1</diffuse>
+    <specular>0.3 0.3 0.3 1</specular>
+    <attenuation>
+      <range>4</range>
+      <constant>0.4</constant>
+      <linear>0.3</linear>
+      <quadratic>0.02</quadratic>
+    </attenuation>
+    <cast_shadows>false</cast_shadows>
+  </light>
+
+  <light name="lamp_2" type="point">
+    <pose>0.3 0.45 1.8 0 0 0</pose>
+    <diffuse>1.0 0.95 0.85 1</diffuse>
+    <specular>0.3 0.3 0.3 1</specular>
+    <attenuation>
+      <range>4</range>
+      <constant>0.4</constant>
+      <linear>0.3</linear>
+      <quadratic>0.02</quadratic>
+    </attenuation>
+    <cast_shadows>false</cast_shadows>
+  </light>
+
+  <!-- ── Ground plane ─────────────────────────────────────────── -->
+  <model name="ground_plane">
+    <static>true</static>
+    <link name="link">
+      <collision name="collision">
+        <geometry>
+          <plane><normal>0 0 1</normal><size>10 10</size></plane>
+        </geometry>
+        <surface>
+          <friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction>
+        </surface>
+      </collision>
+      <visual name="visual">
+        <geometry>
+          <plane><normal>0 0 1</normal><size>10 10</size></plane>
+        </geometry>
+        <material>
+          <ambient>0.35 0.35 0.35 1</ambient>
+          <diffuse>0.35 0.35 0.35 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ── Pick station ──────────────────────────────────────────
+       Table top at z=0.30, robot picks boxes at (0.45–0.50, ±0.10, 0.33)
+  ──────────────────────────────────────────────────────────── -->
+  <model name="pick_table">
+    <static>true</static>
+    <pose>0.5 0.0 0 0 0 0</pose>
+    <link name="link">
+      <!-- Table top -->
+      <visual name="top">
+        <pose>0 0 0.28 0 0 0</pose>
+        <geometry><box><size>0.60 0.50 0.04</size></box></geometry>
+        <material>
+          <ambient>0.55 0.38 0.18 1</ambient>
+          <diffuse>0.55 0.38 0.18 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <collision name="top">
+        <pose>0 0 0.28 0 0 0</pose>
+        <geometry><box><size>0.60 0.50 0.04</size></box></geometry>
+        <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface>
+      </collision>
+      <!-- Legs -->
+      <visual name="leg_fl">
+        <pose>0.27 0.22 0.13 0 0 0</pose>
+        <geometry><cylinder><radius>0.022</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.30 0.20 0.10 1</ambient><diffuse>0.30 0.20 0.10 1</diffuse></material>
+      </visual>
+      <visual name="leg_fr">
+        <pose>0.27 -0.22 0.13 0 0 0</pose>
+        <geometry><cylinder><radius>0.022</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.30 0.20 0.10 1</ambient><diffuse>0.30 0.20 0.10 1</diffuse></material>
+      </visual>
+      <visual name="leg_bl">
+        <pose>-0.27 0.22 0.13 0 0 0</pose>
+        <geometry><cylinder><radius>0.022</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.30 0.20 0.10 1</ambient><diffuse>0.30 0.20 0.10 1</diffuse></material>
+      </visual>
+      <visual name="leg_br">
+        <pose>-0.27 -0.22 0.13 0 0 0</pose>
+        <geometry><cylinder><radius>0.022</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.30 0.20 0.10 1</ambient><diffuse>0.30 0.20 0.10 1</diffuse></material>
+      </visual>
+      <!-- Pick-zone marker strip (yellow) -->
+      <visual name="zone_marker">
+        <pose>0 0 0.301 0 0 0</pose>
+        <geometry><box><size>0.58 0.48 0.002</size></box></geometry>
+        <material>
+          <ambient>0.9 0.8 0.0 1</ambient>
+          <diffuse>0.9 0.8 0.0 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ── Cargo boxes (physics-enabled, on pick table) ──────────
+       Boxes rest at z = table_top(0.30) + half_box(0.03) = 0.33 m
+       Match the /pick service default target (0.5, 0.0, 0.3):
+         box_1 at (0.45, -0.10, 0.33) — RED
+         box_2 at (0.50,  0.00, 0.33) — GREEN  ← default pick target
+         box_3 at (0.45,  0.10, 0.33) — BLUE
+  ──────────────────────────────────────────────────────────── -->
+  <model name="cargo_box_1">
+    <pose>0.45 -0.10 0.33 0 0 0.2</pose>
+    <link name="link">
+      <inertial>
+        <mass>0.25</mass>
+        <inertia>
+          <ixx>0.000150</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.000150</iyy><iyz>0</iyz><izz>0.000150</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <surface>
+          <friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction>
+          <contact><ode><kp>1e6</kp><kd>1</kd></ode></contact>
+        </surface>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <material>
+          <ambient>0.85 0.15 0.10 1</ambient>
+          <diffuse>0.85 0.15 0.10 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <model name="cargo_box_2">
+    <pose>0.50 0.00 0.33 0 0 0</pose>
+    <link name="link">
+      <inertial>
+        <mass>0.25</mass>
+        <inertia>
+          <ixx>0.000150</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.000150</iyy><iyz>0</iyz><izz>0.000150</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <surface>
+          <friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction>
+          <contact><ode><kp>1e6</kp><kd>1</kd></ode></contact>
+        </surface>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <material>
+          <ambient>0.10 0.75 0.15 1</ambient>
+          <diffuse>0.10 0.75 0.15 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <model name="cargo_box_3">
+    <pose>0.45 0.10 0.33 0 0 -0.15</pose>
+    <link name="link">
+      <inertial>
+        <mass>0.25</mass>
+        <inertia>
+          <ixx>0.000150</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.000150</iyy><iyz>0</iyz><izz>0.000150</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <surface>
+          <friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction>
+          <contact><ode><kp>1e6</kp><kd>1</kd></ode></contact>
+        </surface>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <material>
+          <ambient>0.10 0.30 0.90 1</ambient>
+          <diffuse>0.10 0.30 0.90 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ── Place station (delivery platform) ─────────────────────
+       /place default target: (0.3, 0.4, 0.3)
+       Table top at z=0.30, centred at (0.30, 0.45)
+  ──────────────────────────────────────────────────────────── -->
+  <model name="place_table">
+    <static>true</static>
+    <pose>0.30 0.45 0 0 0 0</pose>
+    <link name="link">
+      <visual name="top">
+        <pose>0 0 0.28 0 0 0</pose>
+        <geometry><box><size>0.45 0.45 0.04</size></box></geometry>
+        <material>
+          <ambient>0.15 0.35 0.65 1</ambient>
+          <diffuse>0.15 0.35 0.65 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
+        </material>
+      </visual>
+      <collision name="top">
+        <pose>0 0 0.28 0 0 0</pose>
+        <geometry><box><size>0.45 0.45 0.04</size></box></geometry>
+        <surface><friction><ode><mu>0.8</mu><mu2>0.8</mu2></ode></friction></surface>
+      </collision>
+      <!-- Legs -->
+      <visual name="leg_fl">
+        <pose>0.20 0.20 0.13 0 0 0</pose>
+        <geometry><cylinder><radius>0.022</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.08 0.18 0.38 1</ambient><diffuse>0.08 0.18 0.38 1</diffuse></material>
+      </visual>
+      <visual name="leg_fr">
+        <pose>0.20 -0.20 0.13 0 0 0</pose>
+        <geometry><cylinder><radius>0.022</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.08 0.18 0.38 1</ambient><diffuse>0.08 0.18 0.38 1</diffuse></material>
+      </visual>
+      <visual name="leg_bl">
+        <pose>-0.20 0.20 0.13 0 0 0</pose>
+        <geometry><cylinder><radius>0.022</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.08 0.18 0.38 1</ambient><diffuse>0.08 0.18 0.38 1</diffuse></material>
+      </visual>
+      <visual name="leg_br">
+        <pose>-0.20 -0.20 0.13 0 0 0</pose>
+        <geometry><cylinder><radius>0.022</radius><length>0.26</length></cylinder></geometry>
+        <material><ambient>0.08 0.18 0.38 1</ambient><diffuse>0.08 0.18 0.38 1</diffuse></material>
+      </visual>
+      <!-- Drop-zone marker (white cross) -->
+      <visual name="marker_h">
+        <pose>0 0 0.301 0 0 0</pose>
+        <geometry><box><size>0.30 0.06 0.002</size></box></geometry>
+        <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+      </visual>
+      <visual name="marker_v">
+        <pose>0 0 0.302 0 0 0</pose>
+        <geometry><box><size>0.06 0.30 0.002</size></box></geometry>
+        <material><ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+
+  <!-- ── Robot mount plate ─────────────────────────────────────
+       Visual-only base plate under the robot arm.
+  ──────────────────────────────────────────────────────────── -->
+  <model name="robot_mount">
+    <static>true</static>
+    <pose>0 0 0 0 0 0</pose>
+    <link name="link">
+      <visual name="plate">
+        <pose>0 0 0.01 0 0 0</pose>
+        <geometry><box><size>0.20 0.20 0.02</size></box></geometry>
+        <material>
+          <ambient>0.15 0.15 0.15 1</ambient>
+          <diffuse>0.15 0.15 0.15 1</diffuse>
+          <specular>0.4 0.4 0.4 1</specular>
+        </material>
+      </visual>
+      <collision name="plate">
+        <pose>0 0 0.01 0 0 0</pose>
+        <geometry><box><size>0.20 0.20 0.02</size></box></geometry>
+      </collision>
+    </link>
+  </model>
+
+  <!-- ── Back wall ─────────────────────────────────────────────── -->
+  <model name="back_wall">
+    <static>true</static>
+    <pose>1.20 0 1.00 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>0.08 3.00 2.00</size></box></geometry>
+        <material>
+          <ambient>0.75 0.73 0.68 1</ambient>
+          <diffuse>0.75 0.73 0.68 1</diffuse>
+        </material>
+      </visual>
+      <collision name="collision">
+        <geometry><box><size>0.08 3.00 2.00</size></box></geometry>
+      </collision>
+    </link>
+  </model>
+
+  <model name="side_wall">
+    <static>true</static>
+    <pose>0 -1.20 1.00 0 0 0</pose>
+    <link name="link">
+      <visual name="visual">
+        <geometry><box><size>3.00 0.08 2.00</size></box></geometry>
+        <material>
+          <ambient>0.75 0.73 0.68 1</ambient>
+          <diffuse>0.75 0.73 0.68 1</diffuse>
+        </material>
+      </visual>
+      <collision name="collision">
+        <geometry><box><size>3.00 0.08 2.00</size></box></geometry>
+      </collision>
+    </link>
+  </model>
+
+  <!-- ── Storage shelf (background prop) ───────────────────────── -->
+  <model name="shelf">
+    <static>true</static>
+    <pose>1.10 -0.70 0 0 0 0</pose>
+    <link name="link">
+      <!-- Uprights -->
+      <visual name="upright_l">
+        <pose>0 0.20 0.60 0 0 0</pose>
+        <geometry><box><size>0.04 0.04 1.20</size></box></geometry>
+        <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
+      </visual>
+      <visual name="upright_r">
+        <pose>0 -0.20 0.60 0 0 0</pose>
+        <geometry><box><size>0.04 0.04 1.20</size></box></geometry>
+        <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
+      </visual>
+      <!-- Shelves -->
+      <visual name="shelf_lo">
+        <pose>0 0 0.35 0 0 0</pose>
+        <geometry><box><size>0.04 0.44 0.03</size></box></geometry>
+        <material><ambient>0.6 0.45 0.25 1</ambient><diffuse>0.6 0.45 0.25 1</diffuse></material>
+      </visual>
+      <visual name="shelf_hi">
+        <pose>0 0 0.80 0 0 0</pose>
+        <geometry><box><size>0.04 0.44 0.03</size></box></geometry>
+        <material><ambient>0.6 0.45 0.25 1</ambient><diffuse>0.6 0.45 0.25 1</diffuse></material>
+      </visual>
+      <!-- Props on shelf -->
+      <visual name="prop_1">
+        <pose>0 0.08 0.40 0 0 0</pose>
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <material><ambient>0.8 0.4 0.1 1</ambient><diffuse>0.8 0.4 0.1 1</diffuse></material>
+      </visual>
+      <visual name="prop_2">
+        <pose>0 -0.08 0.40 0 0 0</pose>
+        <geometry><box><size>0.06 0.06 0.06</size></box></geometry>
+        <material><ambient>0.3 0.6 0.8 1</ambient><diffuse>0.3 0.6 0.8 1</diffuse></material>
+      </visual>
+      <collision name="collision">
+        <pose>0 0 0.60 0 0 0</pose>
+        <geometry><box><size>0.04 0.44 1.20</size></box></geometry>
+      </collision>
+    </link>
+  </model>
+
+</world>
+</sdf>

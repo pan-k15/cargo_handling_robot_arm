@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <future>
+#include <thread>
 
 // ── Robot geometry constants ─────────────────────────────────────────────────
 // joint2 sits at z = 0.05 (base) + 0.10 (link1) = 0.15 m above the world origin.
@@ -43,10 +44,15 @@ static bool computeIK(double tx, double ty, double tz,
     const double j3 = std::atan2(s3, c3);
     const double j2 = std::atan2(h, r) - std::atan2(L2 * s3, L1 + L2 * c3);
 
-    if (j2 < -M_PI / 2 || j2 > M_PI / 2) return false;
-    if (j3 < -3 * M_PI / 4 || j3 > 0.0)  return false;
+    // URDF joint2 measures from vertical (j2=0 → link2 up, j2=π/2 → link2 forward).
+    // Standard 2R IK measures from horizontal. Convert: j2_urdf = π/2 - j2_ik, j3_urdf = -j3_ik.
+    const double j2_urdf = M_PI / 2.0 - j2;
+    const double j3_urdf = -j3;
 
-    joints = {j1, j2, j3, 0.0, 0.0, 0.0};
+    if (j2_urdf < 0.0 || j2_urdf > M_PI / 2) return false;
+    if (j3_urdf < 0.0 || j3_urdf > 3 * M_PI / 4) return false;
+
+    joints = {j1, j2_urdf, j3_urdf, 0.0, 0.0, 0.0};
     return true;
 }
 
@@ -110,6 +116,9 @@ private:
         auto future  = promise->get_future();
 
         rclcpp_action::Client<FJT>::SendGoalOptions opts;
+        opts.goal_response_callback = [promise](const GoalHandleFJT::SharedPtr & gh) {
+            if (!gh) promise->set_value(false);
+        };
         opts.result_callback = [promise](const GoalHandleFJT::WrappedResult & r) {
             promise->set_value(r.code == rclcpp_action::ResultCode::SUCCEEDED);
         };
@@ -132,12 +141,15 @@ private:
         }
         GripperCmd::Goal goal;
         goal.command.position = opening;
-        goal.command.max_effort = 50.0;
+        goal.command.max_effort = 200.0;
 
         auto promise = std::make_shared<std::promise<bool>>();
         auto future  = promise->get_future();
 
         rclcpp_action::Client<GripperCmd>::SendGoalOptions opts;
+        opts.goal_response_callback = [promise](const GoalHandleGrip::SharedPtr & gh) {
+            if (!gh) promise->set_value(false);
+        };
         opts.result_callback = [promise](const GoalHandleGrip::WrappedResult & r) {
             promise->set_value(r.code == rclcpp_action::ResultCode::SUCCEEDED);
         };
@@ -177,7 +189,11 @@ private:
 
         // 1. Open gripper
         RCLCPP_INFO(get_logger(), "[pick] Opening gripper");
-        commandGripper(0.03);
+        if (!commandGripper(0.03)) {
+            res->success = false;
+            res->message = "Failed to open gripper";
+            return;
+        }
 
         // 2. Move to pre-grasp
         RCLCPP_INFO(get_logger(), "[pick] Moving to pre-grasp");
@@ -195,9 +211,14 @@ private:
             return;
         }
 
-        // 4. Close gripper
+        // 4. Close gripper and wait for physics to settle before lifting
         RCLCPP_INFO(get_logger(), "[pick] Closing gripper");
-        commandGripper(0.0);
+        if (!commandGripper(0.0)) {
+            res->success = false;
+            res->message = "Failed to close gripper";
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
         // 5. Lift back to pre-grasp
         RCLCPP_INFO(get_logger(), "[pick] Lifting");
