@@ -12,6 +12,8 @@ find_package(ament_cmake_python REQUIRED)
 install(PROGRAMS
   scripts/yolo_classifier.py
   scripts/sort_orchestrator.py
+  scripts/sort_orchestrator_v2.py
+  scripts/sort_orchestrator_v3.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
